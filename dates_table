@@ -1,0 +1,18 @@
+CREATE OR REPLACE TABLE demo_db.de_case_sebastian182100_schema.dates_table (
+    full_date DATE,
+    custom_date STRING
+);
+TRUNCATE demo_db.de_case_sebastian182100_schema.dates_table
+;
+-- Insert dates for the last 4 years
+INSERT INTO demo_db.de_case_sebastian182100_schema.dates_table
+WITH date_range AS (
+    SELECT 
+        DATEADD(day, seq4(), DATEADD(year, -23, CURRENT_DATE)) AS full_date
+    FROM TABLE(GENERATOR(ROWCOUNT => 10000)) -- 4 years + 1 leap day buffer
+)
+SELECT 
+    full_date,
+    CONCAT('00', RIGHT(TO_CHAR(full_date, 'YY'), 2), '-', TO_CHAR(full_date, 'MM'), '-', TO_CHAR(full_date, 'DD')) AS custom_date
+FROM date_range
+ORDER BY full_date;
