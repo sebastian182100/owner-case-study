@@ -1,0 +1,98 @@
+CREATE OR REPLACE TABLE DEMO_DB.DE_CASE_SEBASTIAN182100_SCHEMA.SSOT_LEADS_OPPS_V AS
+
+WITH leads AS (
+  SELECT
+    l.lead_id,
+    TO_DATE(CONCAT('20', SUBSTR(form_submission_date, 3, 2), '-', SUBSTR(form_submission_date, 6, 2), '-', SUBSTR(form_submission_date, 9, 2)), 'YYYY-MM-DD') AS form_submission_date,
+    l.sales_call_count,
+    l.sales_text_count,
+    l.sales_email_count,
+    l.first_sales_call_date,
+    l.first_text_sent_date,
+    l.first_meeting_booked_date,
+    l.last_sales_activity_date,
+    l.location_count,
+    l.connected_with_decision_maker,
+    l.status AS lead_status,
+    l.converted_opportunity_id
+  FROM DEMO_DB.GTM_CASE.LEADS l ----THIS CAN SCALE WHEN WE HAVE A LAST UPDATED DATE
+)
+
+, opps AS (
+  SELECT
+    o.opportunity_id,
+    o.stage_name,
+    o.lost_reason_c,
+    o.business_issue_c,
+    o.how_did_you_hear_about_us_c,
+    o.created_date::DATE AS opportunity_created_date,
+    o.demo_held,
+    TO_DATE(CONCAT('20', SUBSTR(demo_set_date, 3, 2), '-', SUBSTR(demo_set_date, 6, 2), '-', SUBSTR(demo_set_date, 9, 2)), 'YYYY-MM-DD') AS demo_set_date,
+    o.demo_time,
+    TO_DATE(CONCAT('20', SUBSTR(close_date, 3, 2), '-', SUBSTR(close_date, 6, 2), '-', SUBSTR(close_date, 9, 2)), 'YYYY-MM-DD') AS close_date,
+    o.last_sales_call_date_time
+  FROM DEMO_DB.GTM_CASE.OPPORTUNITIES o --THIS CAN SCALE WHEN WE HAVE A LAST UPDATED DATE
+)
+
+SELECT
+  -- keep both IDs
+  l.lead_id,
+  o.opportunity_id,
+
+  -- new record type flag
+  CASE
+    WHEN l.lead_id IS NOT NULL AND o.opportunity_id IS NOT NULL THEN 'lead_converted'
+    WHEN l.lead_id IS NOT NULL THEN 'lead_only'
+    WHEN o.opportunity_id IS NOT NULL THEN 'opportunity_only'
+    ELSE 'unknown'
+  END AS record_type,
+
+  -- raw source
+  o.how_did_you_hear_about_us_c AS raw_channel,
+
+  -- normalized channel attribution
+  CASE
+    WHEN LOWER(o.how_did_you_hear_about_us_c) LIKE '%facebook%' THEN 'paid_facebook'
+    WHEN LOWER(o.how_did_you_hear_about_us_c) LIKE '%google%' THEN 'paid_google'
+    WHEN LOWER(o.how_did_you_hear_about_us_c) LIKE '%inbound%' THEN 'inbound_other'
+    WHEN LOWER(o.how_did_you_hear_about_us_c) LIKE '%outbound%' THEN 'outbound'
+    WHEN LOWER(o.how_did_you_hear_about_us_c) IS NULL AND l.converted_opportunity_id IS NOT NULL THEN 'unknown_converted'
+    ELSE 'other'
+  END AS channel,
+
+  -- funnel timestamps
+  l.form_submission_date,
+  l.first_sales_call_date,
+  l.first_text_sent_date,
+  l.first_meeting_booked_date,
+  o.demo_set_date,
+  o.demo_time,
+  o.demo_held,
+  o.opportunity_created_date,
+  o.close_date,
+
+  -- derived funnel flags
+  CASE WHEN o.demo_set_date IS NOT NULL THEN TRUE ELSE FALSE END AS demo_booked_flag,
+  CASE WHEN o.demo_held = TRUE THEN TRUE ELSE FALSE END AS demo_held_flag,
+  CASE WHEN LOWER(o.stage_name) LIKE '%closed won%' OR LOWER(o.stage_name) LIKE '%won%' THEN TRUE ELSE FALSE END AS is_won,
+  CASE WHEN LOWER(o.stage_name) LIKE '%closed lost%' OR LOWER(o.stage_name) LIKE '%lost%' THEN TRUE ELSE FALSE END AS is_lost,
+
+  -- timings (in hours/days)
+  DATEDIFF(SECOND, l.form_submission_date::TIMESTAMP, l.first_sales_call_date) / 3600.0 AS hrs_to_first_call,
+  DATEDIFF(DAY, l.form_submission_date, o.demo_set_date) AS days_to_demo,
+  DATEDIFF(DAY, l.form_submission_date, o.close_date) AS days_to_close,
+
+  -- sales activity metrics
+  l.sales_call_count,
+  l.sales_text_count,
+  l.sales_email_count,
+  l.location_count,
+  l.connected_with_decision_maker,
+  l.lead_status,
+  o.stage_name
+
+FROM leads l
+FULL OUTER JOIN opps o
+  ON l.converted_opportunity_id = o.opportunity_id;
+
+;
