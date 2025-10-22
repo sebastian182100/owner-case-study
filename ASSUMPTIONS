@@ -1,0 +1,11 @@
+create or replace table DEMO_DB.DE_CASE_SEBASTIAN182100_SCHEMA.ASSUMPTIONS (
+  ASSUMPTION_SET VARCHAR,
+  MONTHLY_SUBSCRIPTION_USD NUMBER(18,2),        -- $500 default
+  TAKE_RATE NUMBER(8,4),                    -- 5% = 0.05
+  AVG_MONTHLY_GROSS_ORDERS NUMBER(18,2),    -- estimated gross online sales per customer / month
+  AVG_CUSTOMER_LIFETIME_MONTHS NUMBER(18,2),-- months
+  DISTRIBUTION_METHOD VARCHAR               -- how to allocate fixed CAC (e.g. 'by_leads','by_opportunities')
+);
+
+insert into DEMO_DB.DE_CASE_SEBASTIAN182100_SCHEMA.ASSUMPTIONS values
+('base_case', 500.00, 0.05, 2000.00, 18.0, 'by_opportunities');
