@@ -1,0 +1,102 @@
+WITH base AS (
+    SELECT
+        opportunity_id,
+        record_type,
+        channel,
+        form_submission_date,
+        opportunity_created_date,
+        close_date,
+        is_won,
+        is_lost
+    FROM DEMO_DB.DE_CASE_SEBASTIAN182100_SCHEMA.SSOT_LEADS_OPPS_V
+    WHERE 
+        record_type <> 'lead_only'       -- exclude leads that never converted
+)
+, expenses_prep AS (
+    SELECT
+        TO_DATE(s.month, 'MON-YY') AS month,
+        CAST(REPLACE(REGEXP_REPLACE(outbound_sales_team, '(US\\$|\\s|\u00A0)', ''), ',', '.') AS NUMBER(18,2)) AS outbound_sales_team,
+        CAST(REPLACE(REGEXP_REPLACE(inbound_sales_team, '(US\\$|\\s|\u00A0)', ''), ',', '.') AS NUMBER(18,2)) AS inbound_sales_team
+    FROM DEMO_DB.GTM_CASE.EXPENSES_SALARY_AND_COMMISSIONS s
+)
+, advertisement_prep AS (
+    SELECT
+        TO_DATE(s.month, 'MON-YY') AS month,
+        CAST(REPLACE(REGEXP_REPLACE(s.advertising, '(US\\$|\\s|\u00A0)', ''), ',', '.') AS NUMBER(18,2)) AS advertising,
+    FROM DEMO_DB.GTM_CASE.EXPENSES_ADVERTISING s
+)
+, date_spine AS (
+    SELECT
+        DATE_TRUNC('month', full_date) AS year_month
+    FROM DEMO_DB.DE_CASE_SEBASTIAN182100_SCHEMA.DATES_TABLE
+    WHERE 
+        full_date BETWEEN DATEADD(year, -4, CURRENT_DATE) AND CURRENT_DATE
+    GROUP BY 1
+)
+, expenses AS (
+    SELECT
+        d.year_month AS month,
+        COALESCE(ep.outbound_sales_team, 0) AS outbound_sales_team,
+        COALESCE(ep.inbound_sales_team, 0) AS inbound_sales_team,
+        COALESCE(ap.advertising, 0) AS advertising,
+        COALESCE(ep.outbound_sales_team, 0) + COALESCE(ep.inbound_sales_team, 0) + COALESCE(ap.advertising, 0) AS total_gtm_spend
+    FROM date_spine d
+        LEFT JOIN expenses_prep ep
+            ON ep.month = d.year_month
+        LEFT JOIN advertisement_prep ap
+            ON ap.month = d.year_month
+)
+, opportunity_data AS (
+    SELECT
+        d.year_month,
+        b.opportunity_id,
+        b.record_type,
+        b.channel,
+        b.is_won,
+        b.is_lost,
+        e.total_gtm_spend
+    FROM date_spine d
+        JOIN base b
+            ON DATE_TRUNC('month', b.opportunity_created_date) = d.year_month
+        LEFT JOIN expenses e
+            ON e.month = d.year_month
+)
+, calc AS (
+    SELECT
+        j.year_month,
+        j.channel,
+        j.record_type,
+        COUNT(*) AS total_opps,
+        COUNT_IF(j.is_won) AS closed_won_opps,
+        MAX(j.total_gtm_spend) AS total_spend,
+        CASE
+            WHEN COUNT_IF(j.is_won) = 0 THEN NULL
+            ELSE MAX(j.total_gtm_spend) / COUNT_IF(j.is_won)
+        END AS cac_per_won
+    FROM opportunity_data j
+    GROUP BY 1, 2, 3
+)
+, final AS (
+  SELECT
+    c.year_month,
+    c.channel,
+    c.record_type,
+    c.total_opps,
+    c.closed_won_opps,
+    c.total_spend,
+    c.cac_per_won,
+    a.monthly_subscription_usd,
+    a.take_rate,
+    a.avg_monthly_gross_orders,
+    a.avg_customer_lifetime_months,
+    /* Estimated Lifetime Value (LTV) */
+    (a.monthly_subscription_usd * a.avg_customer_lifetime_months) + (a.avg_monthly_gross_orders * a.take_rate * a.avg_customer_lifetime_months) AS est_ltv,
+    /* LTV:CAC Ratio */
+    CASE
+      WHEN c.cac_per_won IS NULL THEN NULL
+      ELSE DIV0((a.monthly_subscription_usd * a.avg_customer_lifetime_months) + (a.avg_monthly_gross_orders * a.take_rate * a.avg_customer_lifetime_months), c.cac_per_won)
+    END AS ltv_to_cac_ratio
+  FROM calc c
+    CROSS JOIN DEMO_DB.DE_CASE_SEBASTIAN182100_SCHEMA.ASSUMPTIONS a
+)
+select * from final
